@@ -102,50 +102,50 @@ void loop() {
 }
 
 
-#include <WiFi.h>
+// #include <WiFi.h>
 
-const char* ssid = "Wokwi-GUEST";
-const char* password = "";
+// const char* ssid = "Wokwi-GUEST";
+// const char* password = "";
 
-const char* host = "www.pushsafer.com";
-const int port = 80;
-const char* request = "/api?k=qDJi4rt2kNLkOOzwheFx&i=176&s=39&v=3&m=Testing";
+// const char* host = "www.pushsafer.com";
+// const int port = 80;
+// const char* request = "/api?k=qDJi4rt2kNLkOOzwheFx&i=176&s=39&v=3&m=Testing";
 
-void sendRequest() {
-  WiFiClient client;
-  while(!client.connect(host, port)) {
-    Serial.println("connection fail");
-    delay(1000);
-  }
-  client.print(String("GET ") + request + " HTTP/1.1\r\n"
-              + "Host: " + host + "\r\n"
-              + "Connection: close\r\n\r\n");
-  delay(500);
+// void sendRequest() {
+//   WiFiClient client;
+//   while(!client.connect(host, port)) {
+//     Serial.println("connection fail");
+//     delay(1000);
+//   }
+//   client.print(String("GET ") + request + " HTTP/1.1\r\n"
+//               + "Host: " + host + "\r\n"
+//               + "Connection: close\r\n\r\n");
+//   delay(500);
 
-  while(client.available()) {
-    String line = client.readStringUntil('\r');
-    Serial.print(line);
-  }
-}
+//   while(client.available()) {
+//     String line = client.readStringUntil('\r');
+//     Serial.print(line);
+//   }
+// }
 
-void wifiConnect() {
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println(" Connected!");
-}
+// void wifiConnect() {
+//   WiFi.begin(ssid, password);
+//   while (WiFi.status() != WL_CONNECTED) {
+//     delay(500);
+//     Serial.print(".");
+//   }
+//   Serial.println(" Connected!");
+// }
 
-void setup() {
-  Serial.begin(9600);
-  Serial.print("Connecting to WiFi");
+// void setup() {
+//   Serial.begin(9600);
+//   Serial.print("Connecting to WiFi");
 
-  wifiConnect();
-  sendRequest();
-}
+//   wifiConnect();
+//   sendRequest();
+// }
 
-void loop() {
+// void loop() {
   
-  delay(100);
-}
+//   delay(100);
+// }

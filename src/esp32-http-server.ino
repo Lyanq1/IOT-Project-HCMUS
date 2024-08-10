@@ -1,109 +1,151 @@
-/* ESP32 HTTP IoT Server Example for Wokwi.com
-
-  https://wokwi.com/arduino/projects/320964045035274834
-
-  When running it on Wokwi for VSCode, you can connect to the 
-  simulated ESP32 server by opening http://localhost:8180
-  in your browser. This is configured by wokwi.toml.
-*/
-
 #include <WiFi.h>
-#include <WiFiClient.h>
-#include <WebServer.h>
-#include <uri/UriBraces.h>
+#include <PubSubClient.h>
+#include <DHTesp.h>
 
-#define WIFI_SSID "Wokwi-GUEST"
-#define WIFI_PASSWORD ""
-// Defining the WiFi channel speeds up the connection:
-#define WIFI_CHANNEL 6
+const int DHT_pin = 14;
 
-WebServer server(80);
+DHTesp dhtSensor;
 
-const int LED1 = 26;
-const int LED2 = 27;
+const char* ssid = "Wokwi-GUEST";
+const char* password = "";
 
-bool led1State = false;
-bool led2State = false;
+//***Set server***
+const char* mqttServer = "broker.hivemq.com"; 
+int port = 1883;
 
-void sendHtml() {
-  String response = R"(
-    <!DOCTYPE html><html>
-      <head>
-        <title>ESP32 Web Server Demo</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-          html { font-family: sans-serif; text-align: center; }
-          body { display: inline-flex; flex-direction: column; }
-          h1 { margin-bottom: 1.2em; } 
-          h2 { margin: 0; }
-          div { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; grid-auto-flow: column; grid-gap: 1em; }
-          .btn { background-color: #5B5; border: none; color: #fff; padding: 0.5em 1em;
-                 font-size: 2em; text-decoration: none }
-          .btn.OFF { background-color: #333; }
-        </style>
-      </head>
-            
-      <body>
-        <h1>ESP32 Web Server</h1>
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
 
-        <div>
-          <h2>LED 1</h2>
-          <a href="/toggle/1" class="btn LED1_TEXT">LED1_TEXT</a>
-          <h2>LED 2</h2>
-          <a href="/toggle/2" class="btn LED2_TEXT">LED2_TEXT</a>
-        </div>
-      </body>
-    </html>
-  )";
-  response.replace("LED1_TEXT", led1State ? "ON" : "OFF");
-  response.replace("LED2_TEXT", led2State ? "ON" : "OFF");
-  server.send(200, "text/html", response);
-}
-
-void setup(void) {
-  Serial.begin(115200);
-  pinMode(LED1, OUTPUT);
-  pinMode(LED2, OUTPUT);
-
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD, WIFI_CHANNEL);
-  Serial.print("Connecting to WiFi ");
-  Serial.print(WIFI_SSID);
-  // Wait for connection
+void wifiConnect() {
+  WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
-    delay(100);
+    delay(500);
     Serial.print(".");
   }
   Serial.println(" Connected!");
-
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-
-  server.on("/", sendHtml);
-
-  server.on(UriBraces("/toggle/{}"), []() {
-    String led = server.pathArg(0);
-    Serial.print("Toggle LED #");
-    Serial.println(led);
-
-    switch (led.toInt()) {
-      case 1:
-        led1State = !led1State;
-        digitalWrite(LED1, led1State);
-        break;
-      case 2:
-        led2State = !led2State;
-        digitalWrite(LED2, led2State);
-        break;
-    }
-
-    sendHtml();
-  });
-
-  server.begin();
-  Serial.println("HTTP server started (http://localhost:8180)");
 }
 
-void loop(void) {
-  server.handleClient();
-  delay(2);
+void mqttConnect() {
+  while(!mqttClient.connected()) {
+    Serial.println("Attemping MQTT connection...");
+    String clientId = "ESP32Client-";
+    clientId += String(random(0xffff), HEX);
+    if(mqttClient.connect(clientId.c_str())) {
+      Serial.println("connected");
+
+      //***Subscribe all topic you need***
+      mqttClient.subscribe("/22127344/DoorControl");
+    }
+    else {
+      Serial.println("try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
+//MQTT Receiver
+void callback(char* topic, byte* message, unsigned int length) {
+  Serial.println(topic);
+  String strMsg;
+  for(int i=0; i<length; i++) {
+    strMsg += (char)message[i];
+  }
+  Serial.println(strMsg);
+  pinMode(15, OUTPUT);
+
+  //***Code here to process the received package***
+  if (strMsg == "on")
+  {
+    digitalWrite(15, HIGH);
+
+  }
+  else {
+    digitalWrite(15,LOW);
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  Serial.print("Connecting to WiFi");
+
+  wifiConnect();
+  mqttClient.setServer(mqttServer, port);
+  mqttClient.setCallback(callback);
+  mqttClient.setKeepAlive( 90 );
+  dhtSensor.setup(DHT_pin, DHTesp::DHT22);
+}
+
+
+void loop() {
+  if(!mqttClient.connected()) {
+    mqttConnect();
+  }
+  mqttClient.loop();
+
+  //***Publish data to MQTT Server***
+  int temp = random(0,100);
+  char buffer[50];
+  sprintf(buffer, "%d", temp);
+  mqttClient.publish("/22127344/DoorControl", buffer);
+
+  TempAndHumidity data = dhtSensor.getTempAndHumidity();
+  Serial.println("Temp: " + String(data.temperature, 2) + "C");
+  Serial.println("Humid: " + String(data.humidity, 1) + "%");
+  String tempStr = String(data.temperature, 2);
+  String humidStr = String(data.humidity, 1);
+  String payload = tempStr + "," + humidStr;
+  mqttClient.publish("/SmartLock/Sensor/Temperature", payload.c_str());
+  // mqttClient.publish("/SmartLock/Sensor/Humidity", humidStr.c_str());
+
+
+  delay(5000);
+}
+
+
+#include <WiFi.h>
+
+const char* ssid = "Wokwi-GUEST";
+const char* password = "";
+
+const char* host = "www.pushsafer.com";
+const int port = 80;
+const char* request = "/api?k=qDJi4rt2kNLkOOzwheFx&i=176&s=39&v=3&m=Testing";
+
+void sendRequest() {
+  WiFiClient client;
+  while(!client.connect(host, port)) {
+    Serial.println("connection fail");
+    delay(1000);
+  }
+  client.print(String("GET ") + request + " HTTP/1.1\r\n"
+              + "Host: " + host + "\r\n"
+              + "Connection: close\r\n\r\n");
+  delay(500);
+
+  while(client.available()) {
+    String line = client.readStringUntil('\r');
+    Serial.print(line);
+  }
+}
+
+void wifiConnect() {
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println(" Connected!");
+}
+
+void setup() {
+  Serial.begin(9600);
+  Serial.print("Connecting to WiFi");
+
+  wifiConnect();
+  sendRequest();
+}
+
+void loop() {
+  
+  delay(100);
 }

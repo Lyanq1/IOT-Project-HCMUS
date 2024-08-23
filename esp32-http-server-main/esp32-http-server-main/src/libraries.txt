@@ -1,0 +1,10 @@
+# Wokwi Library List
+# See https://docs.wokwi.com/guides/libraries
+
+DHT sensor library for ESPx
+RFID_MFRC522v2
+LiquidCrystal I2C
+ESP32Servo
+PubSub Client
+Wifi
+Adafruit Unified Sensor

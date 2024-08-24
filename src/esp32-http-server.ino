@@ -227,7 +227,7 @@ const int LIGHT_THRESHOLD = 400;
 
 // RGB LED Configuration
 const int RED_PIN = 25;
-const int GREEN_PIN = 32;
+const int GREEN_PIN = 15;
 const int BLUE_PIN = 35;
 
 // PIR Sensor Configuration
@@ -243,6 +243,14 @@ const int LED_PIN = 4;  // Separate LED pin
 // Button Configuration
 const int BUTTON_PIN = 13;
 bool previousButtonState = false;
+
+bool sensorOn = true;
+
+
+int userChoice = 0;
+
+bool doorOpened = false;
+bool accessAllowed = false;
 // Predefined RFID IDs in the database
 String validRFID1 = "66b71e88c1c0fb673c77c6c1";
 String validRFID2 = "66c4b24474ba516a448ee024";
@@ -267,6 +275,7 @@ void mqttConnect() {
       // Subscribe to topics
       mqttClient.subscribe("/SmartLock/Control/DoorControl");
       mqttClient.subscribe("/SmartLock/RFID/Accessed");
+      mqttClient.subscribe("/SmartLock/Sensor/Control");
 
     } else {
       Serial.println("try again in 5 seconds");
@@ -277,27 +286,60 @@ void mqttConnect() {
 
 // MQTT Callback
 void callback(char* topic, byte* message, unsigned int length) {
-  Serial.println(topic);
-  String strMsg;
-  for (int i = 0; i < length; i++) {
-    strMsg += (char)message[i];
-  }
-  Serial.println(strMsg);
-  pinMode(15, OUTPUT);
+    Serial.println(topic);
+    String strMsg;
+    for (int i = 0; i < length; i++) {
+        strMsg += (char)message[i];
+    }
+    Serial.println(strMsg);
 
-  // Process the received message
-  if (strMsg == "on") {
-    digitalWrite(15, HIGH);
-  } else {
-    digitalWrite(15, LOW);
-  }
+    if (String(topic) == "/SmartLock/Control/DoorControl") {
+        if (strMsg == "Door open") {
+            // Rotate servo to 90 degrees without resetting
+            myServo.write(0);
+            Serial.println("Door Opened");
+        } else if (strMsg == "Door locked") {
+            myServo.write(90);
+            Serial.println("Door Locked");
+        }
+    } else if (String(topic) == "/SmartLock/RFID/Accessed") {
+        if (strMsg == "Access granted") {
+            Serial.println("Valid RFID! Access Granted.");
+            
+            // Thực hiện các hành động như xoay servo, bật đèn, bật loa
+            myServo.write(90);
+            digitalWrite(LED_PIN, HIGH);  // Bật đèn LED
+            tone(BUZZER_PIN, 1000);       // Kích hoạt buzzer với tần số 1kHz
+
+            delay(2000);  // Giữ các thiết bị hoạt động trong 2 giây
+            
+            // Reset lại servo, đèn và buzzer
+            myServo.write(0);
+            delay(500);
+            digitalWrite(LED_PIN, LOW);   // Tắt đèn LED
+            noTone(BUZZER_PIN);
+
+            Serial.println("Servo, LED, và Buzzer đã được reset.");
+            
+        } else if (strMsg == "Access Denied") {
+            Serial.println("Invalid RFID! Access Denied.");
+        }
+    } else if (String(topic) == "/SmartLock/Sensor/Control") {
+        if (strMsg == "Sensor on") {
+            sensorOn = true;  // Enable publishing of sensor data
+            Serial.println("Temperature Sensor turned on.");
+        } else if (strMsg == "Sensor off") {
+            sensorOn = false;  // Stop publishing sensor data
+            Serial.println("Temperature Sensor turned off.");
+        }
+    }
 }
-
 // Randomly change RGB color
 void setRandomColor() {
-  analogWrite(RED_PIN, random(0, 256));
-  analogWrite(GREEN_PIN, random(0, 256));
-  analogWrite(BLUE_PIN, random(0, 256));
+    analogWrite(RED_PIN, random(0, 256));
+    analogWrite(GREEN_PIN, random(0, 256));
+    analogWrite(BLUE_PIN, random(0, 256));
+ 
 }
 
 void setup() {
@@ -328,24 +370,47 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
 
   lcd.clear();
+  Serial.println("Please enter 0 or 1 to select the mode:");
+  while (true) {
+    if (Serial.available() > 0) {
+        char input = Serial.read();  // Đọc một ký tự từ Serial
+        if (input == '0' || input == '1') {
+            userChoice = input - '0';  // Chuyển đổi ký tự thành số nguyên (0 hoặc 1)
+            Serial.print("User choice set to: ");
+            Serial.println(userChoice);
+            break;  // Thoát vòng lặp khi người dùng đã nhập giá trị hợp lệ
+        } else {
+            Serial.println("Invalid input! Please enter 0 or 1.");
+        }
+    }
+  }
 }
+
 
 void loop() {
   if (!mqttClient.connected()) {
     mqttConnect();
   }
   mqttClient.loop();
-
   // Read DHT22 sensor
-  TempAndHumidity data = dht.getTempAndHumidity();
-  String temperatureStr = "Temp: " + String(data.temperature, 2) + " C";
-  String humidityStr = "Humidity: " + String(data.humidity, 1) + "%";
+        TempAndHumidity data = dht.getTempAndHumidity();
+        String temperatureStr = "Temp: " + String(data.temperature, 2) + " C";
+        String humidityStr = "Humidity: " + String(data.humidity, 1) + "%";
 
-  // Display temperature and humidity on LCD
-  lcd.setCursor(0, 2); // Left bottom corner
-  lcd.print(temperatureStr);
-  lcd.setCursor(0, 3); // Right bottom corner
-  lcd.print(humidityStr);
+        // Display temperature and humidity on LCD
+        lcd.setCursor(0, 2); // Left bottom corner
+        lcd.print(temperatureStr);
+        lcd.setCursor(0, 3); // Right bottom corner
+        lcd.print(humidityStr);
+
+  if (sensorOn) {
+        
+        // Publish sensor data to MQTT server
+        String payload = String(data.temperature, 2) + "," + String(data.humidity, 1);
+        mqttClient.publish("/SmartLock/Sensor/Temperature", payload.c_str());
+
+        Serial.println("Published temperature and humidity data.");
+    }
 
   // Read LDR value
   int ldrValue = analogRead(LDR_PIN);
@@ -371,70 +436,122 @@ void loop() {
   if (motionDetected) {
     setRandomColor();
   }
+  
   // Serial.println(temperatureStr);
   // Serial.println(humidityStr);
   // Serial.println(lux);
   // Serial.println("---");
 
-  String tempStr = String(data.temperature, 2);
-  String humidStr = String(data.humidity, 1);
+//   String tempStr = String(data.temperature, 2);
+//   String humidStr = String(data.humidity, 1);
+// //   String payload = tempStr + "," + humidStr;
+// //   mqttClient.publish("/SmartLock/Sensor/Temperature", payload.c_str());
 //   String payload = tempStr + "," + humidStr;
 //   mqttClient.publish("/SmartLock/Sensor/Temperature", payload.c_str());
-  String payload = tempStr + "," + humidStr;
-  mqttClient.publish("/SmartLock/Sensor/Temperature", payload.c_str());
 
 
     //  ***Publish data to MQTT Server***
-  int temp = random(0,100);
-  char buffer1[50];
-  char buffer2[50];
-  // sprintf(buffer, "%d", temp);
-  sprintf(buffer1, "%d");
-  mqttClient.publish("/SmartLock/Control/DoorControl", buffer1);
-  sprintf(buffer2,"%d");
-  mqttClient.publish("/SmartLock/RFID/Accessed", buffer2);
+  // int temp = random(0,100);
+  // char buffer1[50];
+  // char buffer2[50];
+  // // sprintf(buffer, "%d", temp);
+  // sprintf(buffer1, "%d");
+  // mqttClient.publish("/SmartLock/Control/DoorControl", buffer1);
+  // sprintf(buffer2,"%d");
+  // mqttClient.publish("/SmartLock/RFID/Accessed", buffer2);
   // Simulate RFID scan with button press
-  bool currentButtonState = digitalRead(BUTTON_PIN);
-  if (currentButtonState == LOW && previousButtonState == false ) {
-    previousButtonState = true; // Mark button as pressed
+//   bool currentButtonState = digitalRead(BUTTON_PIN);
+//   if (currentButtonState == LOW && previousButtonState == false ) {
+//     previousButtonState = true; // Mark button as pressed
 
-    // String rfidTag = String(random(0xffff), HEX) + String(random(0xffff), HEX); // Generate random RFID
-    String rfidTag = "66b71e88c1c0fb673c77c6c1";
-    // Publish the RFID tag to the server
-    mqttClient.publish("/SmartLock/RFID", rfidTag.c_str());
+//     // String rfidTag = String(random(0xffff), HEX) + String(random(0xffff), HEX); // Generate random RFID
+//     String rfidTag = "66b71e88c1c0fb673c77c6c1";
+//     // Publish the RFID tag to the server
+//     mqttClient.publish("/SmartLock/RFID", rfidTag.c_str());
 
-    Serial.println("RFID Scanned: " + rfidTag);
+//     Serial.println("RFID Scanned: " + rfidTag);
 
-    // Check if the scanned RFID matches the valid ones
-    if (rfidTag == validRFID1 || rfidTag == validRFID2) {
-      Serial.println("Valid RFID! Access Granted.");
+//     // Check if the scanned RFID matches the valid ones
+//     if (rfidTag == validRFID1 || rfidTag == validRFID2) {
+//       Serial.println("Valid RFID! Access Granted.");
       
-      // Rotate servo, light LED, and activate buzzer
-      myServo.write(90);
-      digitalWrite(LED_PIN, HIGH);  // Turn on the separate LED
-      tone(BUZZER_PIN, 1000);       // Activate buzzer at 1kHz
+//       // Rotate servo, light LED, and activate buzzer
+//       myServo.write(90);
+//       digitalWrite(LED_PIN, HIGH);  // Turn on the separate LED
+//       tone(BUZZER_PIN, 1000);       // Activate buzzer at 1kHz
       
-      delay(2000);  // Keep servo, LED, and buzzer on for 2 seconds
+//       delay(2000);  // Keep servo, LED, and buzzer on for 2 seconds
       
-      // Reset servo, LED, and buzzer
-      myServo.write(0);
-      delay(500);
-      digitalWrite(LED_PIN, LOW);   // Turn off the separate LED
-      noTone(BUZZER_PIN);
+//       // Reset servo, LED, and buzzer
+//       myServo.write(0);
+//       delay(500);
+//       digitalWrite(LED_PIN, LOW);   // Turn off the separate LED
+//       noTone(BUZZER_PIN);
       
-       Serial.println("Servo, LED, and Buzzer reset.");
-    } else {
-        Serial.println("Invalid RFID! Access Denied.");
-    }
-} else if (currentButtonState == HIGH && previousButtonState == true) {
-    // Ensure the button state is reset after the button is released
-    previousButtonState = false; // Reset button pressed state when the button is released
+//        Serial.println("Servo, LED, and Buzzer reset.");
+//     } else {
+//         Serial.println("Invalid RFID! Access Denied.");
+//     }
+// } else if (currentButtonState == HIGH && previousButtonState == true) {
+//     // Ensure the button state is reset after the button is released
+//     previousButtonState = false; // Reset button pressed state when the button is released
+
     myServo.write(0); // Ensure servo is reset to 0 degrees in case it wasn't
     digitalWrite(LED_PIN, LOW);  // Turn off the separate LED
     noTone(BUZZER_PIN);          // Turn off the buzzer
-    Serial.println("Button released, servo reset ensured.");
-}
-  
+    Serial.println(" 2 Button released, servo reset ensured.");
+// }
+  if (Serial.available() > 0) {
+        char input = Serial.read();  // Read a character from Serial
+        if (input == '0' || input == '1') {
+            userChoice = input - '0';  // Convert char to int (0 or 1)
+            Serial.print("User choice set to: ");
+            Serial.println(userChoice);
+        } else {
+            Serial.println("Invalid input! Please enter 0 or 1.");
+        }
+    }
+    
+   bool currentButtonState = digitalRead(BUTTON_PIN);
+    if (currentButtonState == LOW && previousButtonState == false) {
+        previousButtonState = true;  // Đánh dấu nút đã được nhấn
 
-  delay(5000);  // Adjust delay as needed
+        // Phát sinh ngẫu nhiên hoặc sử dụng RFID tag cố định dựa trên lựa chọn của người dùng
+        String rfidTag;
+        if (userChoice == 0) {
+            // Tạo mã RFID ngẫu nhiên và giả định rằng server sẽ trả về "Access Denied"
+            rfidTag = String(random(0xffff), HEX) + String(random(0xffff), HEX);
+        } else if (userChoice == 1) {
+            // Mã RFID cố định
+            rfidTag = "66c8c87cba896247f462e724";
+             
+        }
+        
+        
+        mqttClient.publish("/SmartLock/RFID", rfidTag.c_str());
+
+        Serial.println("RFID Scanned: " + rfidTag);
+
+  //       myServo.write(90);
+  //       digitalWrite(LED_PIN, HIGH);  // Bật đèn LED
+  //       tone(BUZZER_PIN, 1000);       // Kích hoạt buzzer với tần số 1kHz
+
+  //       delay(2000);  // Giữ các thiết bị hoạt động trong 2 giây
+            
+  //           // Reset lại servo, đèn và buzzer
+  //       myServo.write(0);
+  //       delay(500);
+  //       digitalWrite(LED_PIN, LOW);   // Tắt đèn LED
+  //       noTone(BUZZER_PIN);
+
+  //           Serial.println("Servo, LED, và Buzzer đã được reset.");
+    } else if (currentButtonState == HIGH && previousButtonState == true) {
+        previousButtonState = false;  // Reset trạng thái nút khi nút được nhả
+        // myServo.write(0); // Ensure servo is reset to 0 degrees in case it wasn't
+        // digitalWrite(LED_PIN, LOW);  // Turn off the separate LED
+        // noTone(BUZZER_PIN);          // Turn off the buzzer
+        // Serial.println("Button released, servo reset ensured.");
+    }
+
+    delay(5000);  // Điều chỉnh delay theo nhu cầu
 }
